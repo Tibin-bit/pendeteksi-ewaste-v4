@@ -52,20 +52,19 @@ with st.sidebar:
                 selected_model = st.selectbox("Model Gemini Terdeteksi:", avail_models, index=0)
             else:
                 st.warning("⚠️ Tidak dapat mengambil daftar model. Memakai fallback standar.")
-                if fetch_err:
-                    st.caption(f"Detail: {fetch_err}")
-                selected_model = "gemini-2.5-flash"
+                selected_model = "gemini-3.8-flash"
     else:
         st.info("💡 Tempelkan API Key kamu di atas untuk mengaktifkan sistem.")
+        selected_model = "gemini-3.8-flash"
         
     st.markdown("---")
     st.markdown("### 📋 Standar Klasifikasi")
     st.info("Menggunakan pedoman **UN Global E-Waste Monitor** untuk identifikasi bahaya dan daur ulang sampah elektronik.")
     st.markdown("---")
-    st.caption("v3.0 Pro — Dynamic ListModels Active")
+    st.caption("v3.1 Pro — Gemini 3.8 Ready")
 
 # ---------------------------------------------------------
-# 4. FUNGSI ANALISIS GAMBAR
+# 4. FUNGSI ANALISIS GAMBAR (GEMINI 3.8 FLASH)
 # ---------------------------------------------------------
 def analyze_ewaste_smart(image, key, model_name):
     genai.configure(api_key=key)
@@ -96,9 +95,9 @@ def analyze_ewaste_smart(image, key, model_name):
     }
     """
     
-    # Coba model utama, jika bermasalah gunakan alternatif cadangan
+    # Urutan percobaan model dengan mengutamakan versi 3.8 terbaru
     models_to_try = [model_name]
-    fallback_options = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "models/gemini-2.5-flash"]
+    fallback_options = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     for fb in fallback_options:
         if fb not in models_to_try:
             models_to_try.append(fb)
@@ -168,7 +167,7 @@ with tab1:
             elif input_image is None:
                 st.warning("⚠️ **Gambar Belum Ada!** Ambil foto atau unggah gambar terlebih dahulu.")
             else:
-                target_model = selected_model if selected_model else "gemini-2.5-flash"
+                target_model = selected_model if selected_model else "gemini-3.8-flash"
                 with st.spinner(f"🧠 Menganalisis gambar menggunakan model `{target_model}`..."):
                     data, active_model, err = analyze_ewaste_smart(input_image, api_key, target_model)
                     

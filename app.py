@@ -1,4 +1,4 @@
-import streamlit as st
+ import streamlit as st
 import google.generativeai as genai
 from PIL import Image
 import json
@@ -7,7 +7,7 @@ import plotly.express as px
 from datetime import datetime
 
 # ---------------------------------------------------------
-# 1. KONFIGURASI HALAMAN & STATE
+# 1. KONFIGURASI HALAMAN & SESSION STATE
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Global AI E-Waste Detector Pro",
@@ -20,22 +20,7 @@ if "detection_history" not in st.session_state:
     st.session_state.detection_history = []
 
 # ---------------------------------------------------------
-# 2. FUNGSI AMBIL DAFTAR MODEL AKTIF DARI GOOGLE API
-# ---------------------------------------------------------
-def get_available_gemini_models(api_key):
-    try:
-        genai.configure(api_key=api_key)
-        models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                name = m.name.replace("models/", "")
-                models.append(name)
-        return models, None
-    except Exception as e:
-        return [], str(e)
-
-# ---------------------------------------------------------
-# 3. SIDEBAR (KONFIGURASI API KEY & PILIHAN MODEL)
+# 2. SIDEBAR CONFIGURATION
 # ---------------------------------------------------------
 with st.sidebar:
     st.title("⚡ AI Core Settings")
@@ -43,30 +28,29 @@ with st.sidebar:
     
     api_key = st.text_input("Masukkan Gemini API Key:", type="password", help="Dapatkan API Key dari Google AI Studio")
     
-    selected_model = None
-    if api_key:
-        with st.spinner("Memeriksa model aktif di akun kamu..."):
-            avail_models, fetch_err = get_available_gemini_models(api_key)
-            if avail_models:
-                st.success(f"Ditemukan {len(avail_models)} model aktif!")
-                selected_model = st.selectbox("Model Gemini Terdeteksi:", avail_models, index=0)
-            else:
-                st.warning("⚠️ Tidak dapat mengambil daftar model. Memakai fallback standar.")
-                selected_model = "gemini-3.8-flash"
-    else:
-        st.info("💡 Tempelkan API Key kamu di atas untuk mengaktifkan sistem.")
-        selected_model = "gemini-3.8-flash"
-        
     st.markdown("---")
     st.markdown("### 📋 Standar Klasifikasi")
     st.info("Menggunakan pedoman **UN Global E-Waste Monitor** untuk identifikasi bahaya dan daur ulang sampah elektronik.")
     st.markdown("---")
-    st.caption("v3.1 Pro — Gemini 3.8 Ready")
+    st.caption("v3.2 Pro — Dynamic Auto-Discovery")
 
 # ---------------------------------------------------------
-# 4. FUNGSI ANALISIS GAMBAR (GEMINI 3.8 FLASH)
+# 3. FUNGSI DETEKSI MODEL DENGAN DYNAMIC AUTO-DISCOVERY
 # ---------------------------------------------------------
-def analyze_ewaste_smart(image, key, model_name):
+def get_active_models(key):
+    """Mendapatkan daftar model aktif langsung dari API Google."""
+    try:
+        genai.configure(api_key=key)
+        active_models = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                clean_name = m.name.replace("models/", "")
+                active_models.append(clean_name)
+        return active_models
+    except Exception:
+        return []
+
+def analyze_ewaste_fail_safe(image, key):
     genai.configure(api_key=key)
     
     prompt = """
@@ -95,17 +79,27 @@ def analyze_ewaste_smart(image, key, model_name):
     }
     """
     
-    # Urutan percobaan model dengan mengutamakan versi 3.8 terbaru
-    models_to_try = [model_name]
-    fallback_options = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
-    for fb in fallback_options:
+    # Dapatkan model aktif secara dinamis dari API Google
+    models_to_try = get_active_models(key)
+    
+    # Daftar cadangan jika list_models tidak mengembalikan nilai
+    fallback_defaults = [
+        "gemini-2.0-flash",
+        "gemini-2.5-flash",
+        "gemini-3.8-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro"
+    ]
+    
+    for fb in fallback_defaults:
         if fb not in models_to_try:
             models_to_try.append(fb)
-            
+
     response = None
     last_error = ""
     used_model = ""
 
+    # Coba satu per satu model sampai ada yang berhasil
     for m_name in models_to_try:
         try:
             model = genai.GenerativeModel(m_name)
@@ -119,17 +113,17 @@ def analyze_ewaste_smart(image, key, model_name):
             continue
 
     if response is None:
-        return None, None, f"Gagal memproses gambar. Detail error: {last_error}"
+        return None, None, f"Semua model gagal merespons. Error terakhir: {last_error}"
 
     try:
         clean_text = response.text.replace("```json", "").replace("```", "").strip()
         parsed_data = json.loads(clean_text)
         return parsed_data, used_model, None
     except Exception as e:
-        return None, used_model, f"Gagal membaca format JSON dari AI: {str(e)}"
+        return None, used_model, f"Gagal membaca format data AI: {str(e)}"
 
 # ---------------------------------------------------------
-# 5. TAMPILAN UTAMA APLIKASI
+# 4. TAMPILAN UTAMA APLIKASI
 # ---------------------------------------------------------
 st.title("⚡ Global AI E-Waste Detector Pro")
 st.markdown("Sistem Pengenal & Analisis Bahaya Sampah Elektronik Berbasis Vision AI")
@@ -167,9 +161,8 @@ with tab1:
             elif input_image is None:
                 st.warning("⚠️ **Gambar Belum Ada!** Ambil foto atau unggah gambar terlebih dahulu.")
             else:
-                target_model = selected_model if selected_model else "gemini-3.8-flash"
-                with st.spinner(f"🧠 Menganalisis gambar menggunakan model `{target_model}`..."):
-                    data, active_model, err = analyze_ewaste_smart(input_image, api_key, target_model)
+                with st.spinner("🧠 Menghubungkan ke Gemini AI & menganalisis e-waste..."):
+                    data, active_model, err = analyze_ewaste_fail_safe(input_image, api_key)
                     
                     if err:
                         st.error(f"❌ {err}")
@@ -229,6 +222,3 @@ with tab2:
             st.plotly_chart(fig_bar, use_container_width=True)
     else:
         st.info("Belum ada riwayat deteksi pada sesi ini. Lakukan deteksi di Tab 1 untuk melihat dashboard.")
-
-
- 

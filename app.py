@@ -7,7 +7,7 @@ import plotly.express as px
 from datetime import datetime
 
 # ---------------------------------------------------------
-# 1. KONFIGURASI HALAMAN
+# 1. KONFIGURASI HALAMAN & STATE
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Global AI E-Waste Detector Pro",
@@ -20,7 +20,22 @@ if "detection_history" not in st.session_state:
     st.session_state.detection_history = []
 
 # ---------------------------------------------------------
-# 2. SIDEBAR CONFIGURATION
+# 2. FUNGSI AMBIL DAFTAR MODEL AKTIF DARI GOOGLE API
+# ---------------------------------------------------------
+def get_available_gemini_models(api_key):
+    try:
+        genai.configure(api_key=api_key)
+        models = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                name = m.name.replace("models/", "")
+                models.append(name)
+        return models, None
+    except Exception as e:
+        return [], str(e)
+
+# ---------------------------------------------------------
+# 3. SIDEBAR (KONFIGURASI API KEY & PILIHAN MODEL)
 # ---------------------------------------------------------
 with st.sidebar:
     st.title("⚡ AI Core Settings")
@@ -28,16 +43,31 @@ with st.sidebar:
     
     api_key = st.text_input("Masukkan Gemini API Key:", type="password", help="Dapatkan API Key dari Google AI Studio")
     
+    selected_model = None
+    if api_key:
+        with st.spinner("Memeriksa model aktif di akun kamu..."):
+            avail_models, fetch_err = get_available_gemini_models(api_key)
+            if avail_models:
+                st.success(f"Ditemukan {len(avail_models)} model aktif!")
+                selected_model = st.selectbox("Model Gemini Terdeteksi:", avail_models, index=0)
+            else:
+                st.warning("⚠️ Tidak dapat mengambil daftar model. Memakai fallback standar.")
+                if fetch_err:
+                    st.caption(f"Detail: {fetch_err}")
+                selected_model = "gemini-2.5-flash"
+    else:
+        st.info("💡 Tempelkan API Key kamu di atas untuk mengaktifkan sistem.")
+        
     st.markdown("---")
     st.markdown("### 📋 Standar Klasifikasi")
     st.info("Menggunakan pedoman **UN Global E-Waste Monitor** untuk identifikasi bahaya dan daur ulang sampah elektronik.")
     st.markdown("---")
-    st.caption("v2.5 Pro — Auto-Model Discovery")
+    st.caption("v3.0 Pro — Dynamic ListModels Active")
 
 # ---------------------------------------------------------
-# 3. FUNGSI ANALISIS DENGAN AUTO-FALLBACK MODEL
+# 4. FUNGSI ANALISIS GAMBAR
 # ---------------------------------------------------------
-def analyze_ewaste_smart(image, key):
+def analyze_ewaste_smart(image, key, model_name):
     genai.configure(api_key=key)
     
     prompt = """
@@ -66,52 +96,48 @@ def analyze_ewaste_smart(image, key):
     }
     """
     
-    # Kumpulan model Gemini yang akan dicoba secara berurutan
-    fallback_list = [
-        "gemini-2.0-flash",
-        "gemini-2.5-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "models/gemini-2.0-flash",
-        "models/gemini-1.5-flash"
-    ]
-    
+    # Coba model utama, jika bermasalah gunakan alternatif cadangan
+    models_to_try = [model_name]
+    fallback_options = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "models/gemini-2.5-flash"]
+    for fb in fallback_options:
+        if fb not in models_to_try:
+            models_to_try.append(fb)
+            
     response = None
     last_error = ""
-    used_model_name = ""
+    used_model = ""
 
-    for model_name in fallback_list:
+    for m_name in models_to_try:
         try:
-            model = genai.GenerativeModel(model_name)
+            model = genai.GenerativeModel(m_name)
             res = model.generate_content([prompt, image])
             if res and res.text:
                 response = res
-                used_model_name = model_name
+                used_model = m_name
                 break
         except Exception as e:
             last_error = str(e)
             continue
 
     if response is None:
-        return None, None, f"Gagal mengakses API Gemini. Detail Error: {last_error}"
+        return None, None, f"Gagal memproses gambar. Detail error: {last_error}"
 
     try:
         clean_text = response.text.replace("```json", "").replace("```", "").strip()
         parsed_data = json.loads(clean_text)
-        return parsed_data, used_model_name, None
+        return parsed_data, used_model, None
     except Exception as e:
-        return None, used_model_name, f"Gagal membaca output dari AI: {str(e)}"
+        return None, used_model, f"Gagal membaca format JSON dari AI: {str(e)}"
 
 # ---------------------------------------------------------
-# 4. TAMPILAN UTAMA
+# 5. TAMPILAN UTAMA APLIKASI
 # ---------------------------------------------------------
 st.title("⚡ Global AI E-Waste Detector Pro")
 st.markdown("Sistem Pengenal & Analisis Bahaya Sampah Elektronik Berbasis Vision AI")
 
 tab1, tab2 = st.tabs(["🔍 Analisis E-Waste", "📊 Dashboard & Riwayat"])
 
-# TAB 1: ANALISIS
+# --- TAB 1: ANALISIS ---
 with tab1:
     col_input, col_output = st.columns([1, 1.2], gap="medium")
     
@@ -142,8 +168,9 @@ with tab1:
             elif input_image is None:
                 st.warning("⚠️ **Gambar Belum Ada!** Ambil foto atau unggah gambar terlebih dahulu.")
             else:
-                with st.spinner("🧠 AI sedang memindai komponen dan menganalisis tingkat bahaya..."):
-                    data, active_model, err = analyze_ewaste_smart(input_image, api_key)
+                target_model = selected_model if selected_model else "gemini-2.5-flash"
+                with st.spinner(f"🧠 Menganalisis gambar menggunakan model `{target_model}`..."):
+                    data, active_model, err = analyze_ewaste_smart(input_image, api_key, target_model)
                     
                     if err:
                         st.error(f"❌ {err}")
@@ -185,7 +212,7 @@ with tab1:
                         for idx, step in enumerate(data.get("instruksi_penanganan", []), 1):
                             st.write(f"**{idx}.** {step}")
 
-# TAB 2: DASHBOARD
+# --- TAB 2: DASHBOARD ---
 with tab2:
     st.subheader("📊 Rekapitulasi Deteksi E-Waste")
     
@@ -203,3 +230,6 @@ with tab2:
             st.plotly_chart(fig_bar, use_container_width=True)
     else:
         st.info("Belum ada riwayat deteksi pada sesi ini. Lakukan deteksi di Tab 1 untuk melihat dashboard.")
+
+
+ 
